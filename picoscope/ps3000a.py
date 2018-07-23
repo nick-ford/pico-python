@@ -68,7 +68,11 @@ class PS3000a(_PicoscopeBase):
 
     NUM_CHANNELS = 4
     CHANNELS = {"A": 0, "B": 1, "C": 2, "D": 3,
-                "External": 4, "MaxChannels": 4, "TriggerAux": 5}
+                "External": 4,
+                "MaxChannels": 4,
+                "TriggerAux": 5 }
+
+    DIGITALPORTS = { "DigitalPort0": 0x80, "DigitalPort1": 0x81 }
 
     ADC_RESOLUTIONS = {"8": 0, "12": 1, "14": 2, "15": 3, "16": 4}
 
@@ -131,6 +135,72 @@ class PS3000a(_PicoscopeBase):
     MIN_VALUE_OTHER = -32767
 
     EXT_RANGE_VOLTS = 5
+
+    DIGITAL_CHANNELS = { 
+            "DIGITAL_CHANNEL_0": 0,
+            "DIGITAL_CHANNEL_1": 1,
+            "DIGITAL_CHANNEL_2": 2,
+            "DIGITAL_CHANNEL_3": 3,
+            "DIGITAL_CHANNEL_4": 4,
+            "DIGITAL_CHANNEL_5": 5,
+            "DIGITAL_CHANNEL_6": 6,
+            "DIGITAL_CHANNEL_7": 7,
+            "DIGITAL_CHANNEL_8": 8,
+            "DIGITAL_CHANNEL_9": 9,
+            "DIGITAL_CHANNEL_10": 10,
+            "DIGITAL_CHANNEL_11": 11,
+            "DIGITAL_CHANNEL_12": 12,
+            "DIGITAL_CHANNEL_13": 13,
+            "DIGITAL_CHANNEL_14": 14,
+            "DIGITAL_CHANNEL_15": 15,
+            "DIGITAL_CHANNEL_16": 16,
+            "DIGITAL_CHANNEL_17": 17,
+            "DIGITAL_CHANNEL_18": 18,
+            "DIGITAL_CHANNEL_19": 19,
+            "DIGITAL_CHANNEL_20": 20,
+            "DIGITAL_CHANNEL_21": 21,
+            "DIGITAL_CHANNEL_22": 22,
+            "DIGITAL_CHANNEL_23": 23,
+            "DIGITAL_CHANNEL_24": 24,
+            "DIGITAL_CHANNEL_25": 25,
+            "DIGITAL_CHANNEL_26": 26,
+            "DIGITAL_CHANNEL_27": 27,
+            "DIGITAL_CHANNEL_28": 28,
+            "DIGITAL_CHANNEL_29": 29,
+            "DIGITAL_CHANNEL_30": 30,
+            "DIGITAL_CHANNEL_31": 31,
+            "MAX_DIGITAL_CHANNELS": 32
+        }
+
+    DIGITAL_DIRECTIONS = {
+            "DIGITAL_DONT_CARE": 0,
+            "DIGITAL_DIRECTION_LOW": 1,
+            "DIGITAL_DIRECTION_HIGH": 2,
+            "DIGITAL_DIRECTION_RISING": 3,
+            "DIGITAL_DIRECTION_FALLING": 4,
+            "DIGITAL_DIRECTION_RISING_OR_FALLING": 5,
+            "DIGITAL_MAX_DIRECTIONS": 6
+
+    class PS3000ADigitalChannelDirection(ctypes.Structure):
+        _pack_ = 1
+        _fields_ = [('channel', c_enum),
+                    ('direction', c_enum)]
+
+
+    # Array of Digital Channel Directions
+    class DigitalChannelDirections(types.Structure):
+        _pack_ = 1
+        _fields_ = [('DIRECTION_ARRAY', ctypes.POINTER(PS3000ADigitalChannelDirection))]
+
+        def __init__(self, direction_tuples):
+            num_elems = len(direction_tuples)
+            elems = (PS3000ADigitalChannelDirection * num_elems)()
+            self.DIRECTION_ARRAY = ctypes.cast(elems, ctypes.POINTER(PS3000ADigitalChannelDirection))
+            self.elements = num_elems
+
+            for num in range(0, num_elems):
+                self.DIRECTION_ARRAY[num].channel = direction_tuples[num][0]
+                self.DIRECTION_ARRAY[num].direction = direction_tuples[num][1]
 
     def __init__(self, serialNumber=None, connect=True):
         """Load DLL etc."""
@@ -200,6 +270,19 @@ class PS3000a(_PicoscopeBase):
         m = self.lib.ps3000aSetChannel(c_int16(self.handle), c_enum(chNum),
                                        c_int16(enabled), c_enum(coupling),
                                        c_enum(VRange), c_float(VOffset))
+        self.checkResult(m)
+
+    def _lowLevelSetDigitalPort(self, port, enabled, logiclevel):
+        m = self.lib.ps3000aSetDigitalPort(c_int16(self.handle), c_enum(port),
+                                           c_int16(enabled), c_int16(logiclevel))
+        self.checkResult(m)
+
+    def _lowLevelSetTriggerDigitalPortPorperties(self, directions):
+
+        c_directions = DigitalChannelDirections(directions)
+        nDirections = len(directions)
+
+        m = self.lib.ps3000aSetTriggerDigitalPortProperties(c_int16(self.handle), ctypes.POINTER(c_directions), c_int16(cdirections.elements))
         self.checkResult(m)
 
     def _lowLevelStop(self):
@@ -456,3 +539,32 @@ class PS3000a(_PicoscopeBase):
             c_int16(self.handle),
             c_enum(powerstate))
         self.checkResult(m)
+
+
+    def setDigitalChannel(self, digitalChannel='DigitalPort0', logicLevel=1.8, enabled=True):
+        if enabled:
+            enabled = 1
+        else:
+            enabled = 0
+
+        if not isinstance(digitalChannel, int):
+            chNum = self.DIGITALPORTS[digitalChannel]
+        else:
+            chNum = digitalChannel
+
+        logicLevelScaled = int(max(-32767, (min(32767, 5.0/logicLevel) * 32767)))
+
+        self._lowLevelSetDigitalPort(chNum, enabled, logicLevelScaled)
+
+        # if all was successful, save the parameters
+        #TODO: add instance variables for each of the digital parameters.
+        #self.CHRange[chNum] = VRange
+        #self.CHOffset[chNum] = VOffset
+        #self.ProbeAttenuation[chNum] = probeAttenuation
+
+        return logicLevelScaled
+
+
+    def setDigitalTrigger(self, directions):
+
+        self._lowLevelSetTriggerDigitalPortPorperties(directions)
