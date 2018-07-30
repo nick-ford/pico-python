@@ -55,11 +55,38 @@ import platform
 # float is always defined as 32 bits
 # double is defined as 64 bits
 from ctypes import byref, POINTER, create_string_buffer, c_float, \
-    c_int16, c_int32, c_uint16, c_uint32, c_void_p
+    c_int16, c_int32, c_uint16, c_uint32, c_void_p, Structure, cast
 from ctypes import c_int32 as c_enum
+
+import ctypes
 
 from picoscope.picobase import _PicoscopeBase
 
+class PS3000ADigitalChannelDirection(Structure):
+    _pack_ = 1
+    _fields_ = [('channel', c_enum),
+                ('direction', c_enum)]
+
+
+class PS3000ATriggerConditionsV2(Structure):
+    _pack_ = 1
+    _fields_ = [('channelA', c_enum),
+                ('channelB', c_enum),
+                ('channelC', c_enum),
+                ('channelD', c_enum),
+                ('external', c_enum),
+                ('aux', c_enum),
+                ('pulseWidthQualifier', c_enum),
+                ('digital', c_enum)]
+
+class PS3000ATriggerChannelProperties(Structure):
+    _pack_ = 1
+    _fields_ = [('thresholdUpper', c_int16),
+                ('thresholdUpperHysteresis', c_uint16),
+                ('thresholdLower', c_int16),
+                ('thresholdLowerHysteresis', c_uint16),
+                ('channel', c_enum),
+                ('thresholdMode', c_enum)]
 
 class PS3000a(_PicoscopeBase):
     """The following are low-level functions for the PS3000a."""
@@ -70,7 +97,8 @@ class PS3000a(_PicoscopeBase):
     CHANNELS = {"A": 0, "B": 1, "C": 2, "D": 3,
                 "External": 4,
                 "MaxChannels": 4,
-                "TriggerAux": 5 }
+                "TriggerAux": 5,
+                "DigitalPort0": 0x80, "DigitalPort1": 0x81 }
 
     DIGITALPORTS = { "DigitalPort0": 0x80, "DigitalPort1": 0x81 }
 
@@ -104,6 +132,10 @@ class PS3000a(_PicoscopeBase):
                             "GateHigh": 2, "GateLow": 3}
     SIGGEN_TRIGGER_SOURCES = {"None": 0, "ScopeTrig": 1, "AuxIn": 2,
                               "ExtIn": 3, "SoftTrig": 4, "TriggerRaw": 5}
+
+    TRIGGER_STATES = {  "DontCare": 0,
+                        "True": 1,
+                        "False": 2 }
 
     # This is actually different depending on the AB/CD models
     # I wonder how we could detect the difference between the oscilloscopes
@@ -153,22 +185,6 @@ class PS3000a(_PicoscopeBase):
             "DIGITAL_CHANNEL_13": 13,
             "DIGITAL_CHANNEL_14": 14,
             "DIGITAL_CHANNEL_15": 15,
-            "DIGITAL_CHANNEL_16": 16,
-            "DIGITAL_CHANNEL_17": 17,
-            "DIGITAL_CHANNEL_18": 18,
-            "DIGITAL_CHANNEL_19": 19,
-            "DIGITAL_CHANNEL_20": 20,
-            "DIGITAL_CHANNEL_21": 21,
-            "DIGITAL_CHANNEL_22": 22,
-            "DIGITAL_CHANNEL_23": 23,
-            "DIGITAL_CHANNEL_24": 24,
-            "DIGITAL_CHANNEL_25": 25,
-            "DIGITAL_CHANNEL_26": 26,
-            "DIGITAL_CHANNEL_27": 27,
-            "DIGITAL_CHANNEL_28": 28,
-            "DIGITAL_CHANNEL_29": 29,
-            "DIGITAL_CHANNEL_30": 30,
-            "DIGITAL_CHANNEL_31": 31,
             "MAX_DIGITAL_CHANNELS": 32
         }
 
@@ -180,27 +196,27 @@ class PS3000a(_PicoscopeBase):
             "DIGITAL_DIRECTION_FALLING": 4,
             "DIGITAL_DIRECTION_RISING_OR_FALLING": 5,
             "DIGITAL_MAX_DIRECTIONS": 6
+            }
 
-    class PS3000ADigitalChannelDirection(ctypes.Structure):
-        _pack_ = 1
-        _fields_ = [('channel', c_enum),
-                    ('direction', c_enum)]
+    THRESHOLD_DIRECTION = {
+            "Above":0,
+            "Below":1,
+            "Rising":2,
+            "Falling":3,
+            "RisingOrFalling":4,
+            "AboveLower":5,
+            "BelowLower":6,
+            "RisingLower":7,
+            "FallingLower":8,
+            "Inside":0,
+            "Outside":1,
+            "Enter":2,
+            "Exit":3,
+            "EnterOrExit":4,
+            "PositiveRunt":9,
+            "NegativeRunt":10,
+            "None":2}
 
-
-    # Array of Digital Channel Directions
-    class DigitalChannelDirections(types.Structure):
-        _pack_ = 1
-        _fields_ = [('DIRECTION_ARRAY', ctypes.POINTER(PS3000ADigitalChannelDirection))]
-
-        def __init__(self, direction_tuples):
-            num_elems = len(direction_tuples)
-            elems = (PS3000ADigitalChannelDirection * num_elems)()
-            self.DIRECTION_ARRAY = ctypes.cast(elems, ctypes.POINTER(PS3000ADigitalChannelDirection))
-            self.elements = num_elems
-
-            for num in range(0, num_elems):
-                self.DIRECTION_ARRAY[num].channel = direction_tuples[num][0]
-                self.DIRECTION_ARRAY[num].direction = direction_tuples[num][1]
 
     def __init__(self, serialNumber=None, connect=True):
         """Load DLL etc."""
@@ -277,12 +293,38 @@ class PS3000a(_PicoscopeBase):
                                            c_int16(enabled), c_int16(logiclevel))
         self.checkResult(m)
 
-    def _lowLevelSetTriggerDigitalPortPorperties(self, directions):
+    def _lowLevelSetTriggerChannelProperties(self, channelProperties=0, autoTriggerMilliseconds=0):
+        nChannelProperties = 0 
+        auxOutputEnable = 0
+        m = self.lib.ps3000aSetTriggerChannelProperties(
+                c_int16(self.handle),
+                None,
+                c_int16(nChannelProperties),
+                c_int16(auxOutputEnable),
+                c_int32(autoTriggerMilliseconds))
 
-        c_directions = DigitalChannelDirections(directions)
-        nDirections = len(directions)
+    def _lowLevelSetTriggerDigitalPortProperties(self, directions):
 
-        m = self.lib.ps3000aSetTriggerDigitalPortProperties(c_int16(self.handle), ctypes.POINTER(c_directions), c_int16(cdirections.elements))
+        digDirectionsType = PS3000ADigitalChannelDirection * 16
+        digDirections = digDirectionsType()
+
+        print (ctypes.sizeof(digDirections))
+
+        for num in range(0, len(directions)):
+            digDirections[num] = directions[num]
+
+        #for num in range(0, len(digDirections)):
+        #    print ("direction[{}]: ch{}, dir{}".format(num, digDirections[num].channel, digDirections[num].direction))
+
+        num_directions = len(directions)
+
+        print ("{}".format(digDirections))
+        print ("{}".format(byref(digDirections)))
+        m = self.lib.ps3000aSetTriggerDigitalPortProperties(
+                c_int16(self.handle),
+                byref(digDirections[0]), 
+                c_int16(num_directions))
+
         self.checkResult(m)
 
     def _lowLevelStop(self):
@@ -313,12 +355,79 @@ class PS3000a(_PicoscopeBase):
         self.checkResult(m)
 
     def _lowLevelSetSimpleTrigger(self, enabled, trigsrc, threshold_adc,
-                                  direction, delay, auto):
+                                     direction, delay, auto):
         m = self.lib.ps3000aSetSimpleTrigger(
             c_int16(self.handle), c_int16(enabled),
             c_enum(trigsrc), c_int16(threshold_adc),
             c_enum(direction), c_uint32(delay), c_int16(auto))
         self.checkResult(m)
+ 
+    def _lowLevelSetTriggerChannelConditionsV2(self,
+            conditionChannelA = 'DontCare',
+            conditionChannelB = 'DontCare',
+            conditionChannelC = 'DontCare',
+            conditionChannelD = 'DontCare',
+            conditionExternal = 'DontCare',
+            conditionAux = 'DontCare',
+            conditionPulseWidthQualifier = 'DontCare',
+            conditionDigital = 'True'):
+
+        triggerConditions = (c_int32 * 8)(
+                self.TRIGGER_STATES[conditionChannelA],
+                self.TRIGGER_STATES[conditionChannelB],
+                self.TRIGGER_STATES[conditionChannelC],
+                self.TRIGGER_STATES[conditionChannelD],
+                self.TRIGGER_STATES[conditionExternal],
+                self.TRIGGER_STATES[conditionAux],
+                self.TRIGGER_STATES[conditionPulseWidthQualifier],
+                self.TRIGGER_STATES[conditionDigital])
+
+#        triggerConditions.ChannelA = self.TRIGGER_STATES[conditionChannelA]
+#        triggerConditions.ChannelB = self.TRIGGER_STATES[conditionChannelB]
+#        triggerConditions.ChannelC = self.TRIGGER_STATES[conditionChannelC]
+#        triggerConditions.ChannelD = self.TRIGGER_STATES[conditionChannelD]
+#        triggerConditions.External = self.TRIGGER_STATES[conditionExternal]
+#        triggerConditions.Aux = self.TRIGGER_STATES[conditionAux]
+#        triggerConditions.PulseWidthQualifier = self.TRIGGER_STATES[conditionPulseWidthQualifier]
+#        triggerConditions.Digital = self.TRIGGER_STATES[conditionDigital]
+
+        n_Conditions = 1
+        pConditions = ctypes.pointer(triggerConditions)
+        bConditions = byref(triggerConditions)
+        print (ctypes.sizeof(triggerConditions))
+        print ("{}".format(triggerConditions))
+        print ("{}".format(pConditions))
+        print ("{}".format(bConditions))
+        print ("{}".format(byref(triggerConditions)))
+        
+        m = self.lib.ps3000aSetTriggerChannelConditionsV2(
+            c_int16(self.handle),
+            bConditions,
+            c_int16(n_Conditions) )
+
+        #input()
+            
+        self.checkResult(m)
+
+    def _lowLevelSetTriggerChannelDirections(self,
+            channelADirection='None',
+            channelBDirection='None',
+            channelCDirection='None',
+            channelDDirection='None',
+            extDirection='None',
+            auxDirection='None'):
+
+        m = self.lib.ps3000aSetTriggerChannelDirections(
+                c_int16(self.handle),
+                c_enum(self.THRESHOLD_DIRECTION[channelADirection]),
+                c_enum(self.THRESHOLD_DIRECTION[channelBDirection]),
+                c_enum(self.THRESHOLD_DIRECTION[channelCDirection]),
+                c_enum(self.THRESHOLD_DIRECTION[channelDDirection]),
+                c_enum(self.THRESHOLD_DIRECTION[extDirection]),
+                c_enum(self.THRESHOLD_DIRECTION[auxDirection]))
+
+        self.checkResult(m)
+
 
     def _lowLevelSetNoOfCaptures(self, numCaptures):
         m = self.lib.ps3000aSetNoOfCaptures(c_int16(self.handle),
@@ -541,6 +650,41 @@ class PS3000a(_PicoscopeBase):
         self.checkResult(m)
 
 
+    def _lowLevelSetTriggerDelay(self, delay_samples):
+        m = self.lib.ps3000aSetTriggerDelay(
+                c_int16(self.handle),
+                c_uint32(delay_samples))
+        self.checkResult(m)
+
+
+    def _lowLevelSetPulseWidthQualifierV2(self):
+
+        m = self.lib.ps3000aSetPulseWidthQualifierV2(
+                c_int16(self.handle),
+                None,
+                c_int16(0),
+                c_enum(0),
+                c_uint32(0),
+                c_uint32(0),
+                c_enum(0))
+        self.checkResult(m)
+
+
+    def lowLevelIsTriggerOrPulseWidthQualifierEnabled(self):
+
+        triggerEnabled = c_int16(0)
+        pwqEnabled = c_int16(0)
+        
+        m = self.lib.ps3000aIsTriggerOrPulseWidthQualifierEnabled(
+                c_int16(self.handle),
+                byref(triggerEnabled),
+                byref(pwqEnabled))
+
+        self.checkResult(m)
+
+        print (triggerEnabled, pwqEnabled)
+
+
     def setDigitalChannel(self, digitalChannel='DigitalPort0', logicLevel=1.8, enabled=True):
         if enabled:
             enabled = 1
@@ -552,8 +696,9 @@ class PS3000a(_PicoscopeBase):
         else:
             chNum = digitalChannel
 
-        logicLevelScaled = int(max(-32767, (min(32767, 5.0/logicLevel) * 32767)))
+        logicLevelScaled = int(max(-32767, (min(32767, (logicLevel/5.0) * 32767))))
 
+        print ("Dig CH {}: enabled: {} logicLevel: {}".format(chNum, enabled, logicLevelScaled))
         self._lowLevelSetDigitalPort(chNum, enabled, logicLevelScaled)
 
         # if all was successful, save the parameters
@@ -566,5 +711,19 @@ class PS3000a(_PicoscopeBase):
 
 
     def setDigitalTrigger(self, directions):
+        directionList = []
 
-        self._lowLevelSetTriggerDigitalPortPorperties(directions)
+        for direction in directions:
+            chNum = direction[0]
+            chDir = direction[1]
+
+            if not isinstance(chNum, int):
+                chNum = self.DIGITAL_CHANNELS[chNum]
+            if not isinstance(chDir, int):
+                chDir = self.DIGITAL_DIRECTIONS[chDir]
+
+            directionList.append((chNum, chDir))
+
+        self._lowLevelSetTriggerChannelConditionsV2(conditionDigital = 'True')
+        self._lowLevelSetTriggerDigitalPortProperties(directionList)
+
