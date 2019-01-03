@@ -60,13 +60,9 @@ from ctypes import c_int32 as c_enum
 
 import ctypes
 
+import numpy as np
+
 from picoscope.picobase import _PicoscopeBase
-
-from ctypes import CFUNCTYPE
-
-callbackFuncType=CFUNCTYPE(None, c_int16, c_int32, c_uint32, 
-        c_int16, c_uint32, c_int16, c_int16, c_void_p )
-#GLB_done=False
 
 class PS3000ADigitalChannelDirection(Structure):
     _pack_ = 1
@@ -98,6 +94,7 @@ class PS3000a(_PicoscopeBase):
     """The following are low-level functions for the PS3000a."""
 
     LIBNAME = "ps3000a"
+    WRAPPERLIBNAME = "ps3000aWrap"
 
     NUM_CHANNELS = 4
     CHANNELS = {"A": 0, "B": 1, "C": 2, "D": 3,
@@ -239,19 +236,20 @@ class PS3000a(_PicoscopeBase):
             "Average": 4}
 
 
-
-
     def __init__(self, serialNumber=None, connect=True):
         """Load DLL etc."""
         if platform.system() == 'Linux':
             from ctypes import cdll
             self.lib = cdll.LoadLibrary("lib" + self.LIBNAME + ".so")
+            self.wrapperlib = cdll.LoadLibrary("lib" + self.WRAPPERLIBNAME + ".so")
         elif platform.system() == 'Darwin':
             from picoscope.darwin_utils import LoadLibraryDarwin
             self.lib = LoadLibraryDarwin("lib" + self.LIBNAME + ".dylib")
+            self.wrapperlib = LoadLibraryDarwin("lib" + self.WRAPPERLIBNAME + ".dylib")
         else:
             from ctypes import windll
             self.lib = windll.LoadLibrary(str(self.LIBNAME + ".dll"))
+            self.wrapperlib = windll.LoadLibrary(str(self.WRAPPERLIBNAME + ".dll"))
 
         self.resolution = self.ADC_RESOLUTIONS["8"]
 
@@ -278,6 +276,9 @@ class PS3000a(_PicoscopeBase):
             self.changePowerSource("PICO_POWER_SUPPLY_NOT_CONNECTED")
         else:
             self.checkResult(m)
+
+
+
 
     def _lowLevelCloseUnit(self):
         m = self.lib.ps3000aCloseUnit(c_int16(self.handle))
@@ -444,13 +445,13 @@ class PS3000a(_PicoscopeBase):
         self.checkResult(m)
         return maxSegments.value
 
-    def _lowLevelGetStreamingLatestValues(self, pyFuncReady, parameter):
-        m = self.lib.ps3000aGetStreamingLatestValues(
-                c_int16(self.handle),
-                callbackFuncType(pyFuncReady),
-                ctypes.py_object(parameter))
-        self.checkResult(m)
-        return
+#    def _lowLevelGetStreamingLatestValues(self, pyFuncReady, parameter):
+#        m = self.lib.ps3000aGetStreamingLatestValues(
+#                c_int16(self.handle),
+#                callbackFuncType(pyFuncReady),
+#                ctypes.py_object(parameter))
+#        self.checkResult(m)
+#        return
         
 
     def _lowLevelRunBlock(self, numPreTrigSamples, numPostTrigSamples,
@@ -750,3 +751,158 @@ class PS3000a(_PicoscopeBase):
         self._lowLevelSetTriggerDigitalPortProperties(directionList)
         self._lowLevelSetTriggerDelay(delaysamples)
 
+    # wrapper functions!
+    def wrapperInitWrapUnitInfo(self):
+        c_deviceIndex = c_uint16()
+        m = self.wrapperlib.initWrapUnitInfo(c_int16(self.handle), byref(c_deviceIndex))
+        self.deviceIndex = c_deviceIndex.value
+
+        #print (self.handle)
+
+        self.checkResult(m)
+
+    def wrapperSetChannelCount(self, channelCount):
+        # TODO: surely there is a better way of getting number of channels?
+        self.channelCount = channelCount
+        m = self.wrapperlib.setChannelCount(c_uint16(self.deviceIndex),
+                                            c_int16(channelCount))
+        self.checkResult(m)
+
+    def wrapperSetDigitalPortCount(self, digitalPortCount):
+        # TODO: surely there is a better way of getting number of digital ports?
+        self.digitalPortCount = digitalPortCount
+        m = self.wrapperlib.setDigitalPortCount(c_uint16(self.deviceIndex),
+                                                c_int16(digitalPortCount))
+        self.checkResult(m)
+
+    def wrapperSetEnabledChannels(self, enabledChannels):
+
+        if (len(enabledChannels) != self.channelCount):
+            raise ValueError("enabledChannels length must match the channel count from the setChannelCount call earlier")
+        
+        c_enabledChannels = (c_int16 * self.channelCount)()
+        for chnum in range(0, len(enabledChannels)):
+            if (enabledChannels[chnum]):
+                c_enabledChannels[chnum] = 1
+            else:
+                c_enabledChannels[chnum] = 0
+
+        #print ( c_enabledChannels[0], 
+        #        c_enabledChannels[1],
+        #        c_enabledChannels[2],
+        #        c_enabledChannels[3],)
+
+        m = self.wrapperlib.setEnabledChannels( c_uint16(self.deviceIndex),
+                                                byref(c_enabledChannels))
+        self.checkResult(m)
+
+    def wrapperSetEnabledDigitalPorts(self, enabledDigitalPorts):
+
+        if (len(enabledDigitalPorts) != self.digitalPortCount):
+            raise ValueError("enabledDigitalPorts length must match the channel count from the setDigitalPortCount call earlier")
+        
+        c_enabledDigitalPorts = (c_int16 * self.digitalPortCount)()
+        for chnum in range(0, len(enabledDigitalPorts)):
+            if (enabledDigitalPorts[chnum]):
+                c_enabledDigitalPorts[chnum] = 1
+            else:
+                c_enabledDigitalPorts[chnum] = 0
+
+        m = self.wrapperlib.setEnabledDigitalPorts( c_uint16(self.deviceIndex),
+                                                    byref(c_enabledDigitalPorts))
+        self.checkResult(m)
+
+
+    def wrapperSetAppAndDriverBuffers(self, channel, appBuffer, driverBuffer):
+
+        appBufferPtr = appBuffer.ctypes.data_as(POINTER(c_int16))
+        driverBufferPtr = driverBuffer.ctypes.data_as(POINTER(c_int16))
+        bufferLength = len(driverBuffer)
+
+        #print ("buffers ch:{} appBuf:{:016X} drivBuf:{:016X}".format(channel, ctypes.addressof(appBufferPtr.contents), ctypes.addressof(driverBufferPtr.contents)))
+
+        # TODO: is this a real error
+        if (len(driverBuffer) != len(appBuffer)):
+            raise ValueError("app buffer and driver buffers are different lengths")
+
+        m = self.wrapperlib.setAppAndDriverBuffers( c_uint16(self.deviceIndex),
+                                                    c_int16(channel),
+                                                    appBufferPtr,
+                                                    driverBufferPtr,
+                                                    c_int32(bufferLength))
+
+        self.checkResult(m)
+
+
+    def wrapperSetAppAndDriverDigiBuffers(self, digiPort, appDigiBuffer, driverDigiBuffer):
+
+        appDigiBufferPtr = appDigiBuffer.ctypes.data_as(POINTER(c_int16))
+        driverDigiBufferPtr = driverDigiBuffer.ctypes.data_as(POINTER(c_int16))
+        bufferLength = len(driverDigiBuffer)
+
+        # TODO: is this a real error
+        if (len(driverDigiBuffer) != len(appDigiBuffer)):
+            raise ValueError("app buffer and driver buffers are different lengths")
+
+        m = self.wrapperlib.setAppAndDriverDigiBuffers( c_uint16(self.deviceIndex),
+                                                        c_int16(digiPort),
+                                                        appDigiBufferPtr,
+                                                        driverDigiBufferPtr,
+                                                        c_int32(bufferLength))
+
+        self.checkResult(m)
+
+    def wrapperGetStreamingLatestValues(self):
+        m = self.wrapperlib.GetStreamingLatestValues(c_uint16(self.deviceIndex))
+        self.checkResult(m)
+        #print (m)
+
+    def wrapperAvailableData(self):
+        c_startIndex = c_uint32()
+        m = self.wrapperlib.AvailableData(c_uint16(self.deviceIndex),
+                                            byref(c_startIndex))
+        # return (startindex into app buffer, numSamples)
+        return (c_startIndex.value, m)
+
+    def wrapperIsReady(self):
+        m = self.wrapperlib.IsReady(c_uint16(self.deviceIndex))
+        #print (m)
+        return m
+
+    def wrapperIsTriggerReady(self):
+        m = self.wrapperlib.IsTriggerReady(c_uint16(self.deviceIndex))
+        #print (m)
+        return m
+
+    def wrapperDecrementDeviceCount(self):
+        m = self.wrapperlib.decrementDeviceCount(c_uint16(self.deviceIndex))
+        self.checkResult(m)
+
+    def wrapperClearTriggerReady(self):
+        m = self.wrapperlib.ClearTriggerReady(c_uint16(self.deviceIndex))
+        self.checkResult(m)
+
+    def wrapperGetDeviceCount(self):
+        m = self.wrapperlib.getDeviceCount()
+        return m
+
+
+#            _fields_ = [("handle",                  c_int16),                      2 
+#                        ("channelCount",            c_int16),                      4
+#                        ("enabledChannels",         (c_int16 * 4)),                8
+#                        ("digitalPortCount",        c_int16),                      9
+#                        ("enabledDigitalPorts",     (c_int16 * 4)),                13
+#		        ("ready",                   c_int16),                       14
+#		        ("numSamples",              c_int32),                       16
+
+#		        ("startIndex",              c_uint32),                      18
+#		        ("overflow",                c_int16),                       19
+#		        ("triggeredAt",             c_uint32),                      21
+#		        ("triggered",               c_int16),                       22
+#		        ("autoStop",                c_int16),                       23
+#                        ("driverBuffers",           (POINTER(c_int16) * 8)),       
+#                        ("appBuffers",              (POINTER(c_int16) * 8)),       
+#	                ("bufferLengths",           (c_int32 * 4)),                 
+#                        ("driverDigiBuffers",       (POINTER(c_int16) * 8)),       
+#                        ("appDigiBuffers",          (POINTER(c_int16) * 8)),       
+#	                ("digiBufferLengths",       (c_int32 * 4)) ]                
